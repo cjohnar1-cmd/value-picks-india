@@ -1,366 +1,264 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Value Picks India — Admin Control Center</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              navy: '#0f2338',
-              gold: '#d99b26'
-            }
-          }
-        }
-      }
-    }
-  </script>
+<meta charset="UTF-8">
+<title>Value Picks India - Admin</title>
+<script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-100 text-slate-800 font-sans antialiased min-h-screen">
+<body class="bg-gray-100 min-h-screen p-4">
+<div id="app" class="max-w-3xl mx-auto"></div>
 
-  <!-- PASSWORD GATE -->
-  <div id="authOverlay" class="fixed inset-0 bg-brand-navy z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl text-center">
-      <div class="w-12 h-12 rounded-full bg-brand-navy text-brand-gold mx-auto mb-3 flex items-center justify-center font-bold text-lg">
-        🔒
+<script>
+const REPO = "cjohnar1-cmd/value-picks-india";
+const PASSWORD = "valuepicks2026";
+let TOKEN = localStorage.getItem('vp_gh_token') || '';
+let products = [];
+let productsSha = '';
+
+const app = document.getElementById('app');
+function render(html) { app.innerHTML = html; }
+
+function b64EncodeUnicode(str) {
+  return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g,
+    (match, p1) => String.fromCharCode('0x' + p1)));
+}
+function b64DecodeUnicode(str) {
+  return decodeURIComponent(atob(str).split('').map(c =>
+    '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+}
+
+async function ghGet(path) {
+  const res = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
+    headers: { Authorization: `token ${TOKEN}` }
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`GitHub error ${res.status} fetching ${path}`);
+  return res.json();
+}
+
+async function ghPut(path, base64Content, message, sha) {
+  const body = { message, content: base64Content, branch: "main" };
+  if (sha) body.sha = sha;
+  const res = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `token ${TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(`GitHub save failed: ${err.message}`);
+  }
+  return res.json();
+}
+
+function showPasswordScreen() {
+  render(`
+    <div class="bg-white p-8 rounded-xl shadow mt-20 max-w-sm mx-auto">
+      <h1 class="text-xl font-bold mb-4">Admin Login</h1>
+      <input id="pwInput" type="password" placeholder="Password" class="border p-2 w-full rounded mb-3">
+      <button onclick="checkPassword()" class="bg-blue-600 text-white px-4 py-2 rounded w-full">Login</button>
+      <p id="pwError" class="text-red-600 text-sm mt-2"></p>
+    </div>
+  `);
+}
+
+function checkPassword() {
+  const val = document.getElementById('pwInput').value;
+  if (val === PASSWORD) {
+    if (!TOKEN) { showTokenScreen(); } else { loadDashboard(); }
+  } else {
+    document.getElementById('pwError').innerText = "Wrong password";
+  }
+}
+
+function showTokenScreen() {
+  render(`
+    <div class="bg-white p-8 rounded-xl shadow mt-20 max-w-md mx-auto">
+      <h1 class="text-xl font-bold mb-4">One-time setup: Paste GitHub Token</h1>
+      <p class="text-sm text-gray-600 mb-3">This is stored only in your browser. Paste the token you copied from GitHub.</p>
+      <input id="tokenInput" type="text" placeholder="ghp_xxxxxxxxxxxx" class="border p-2 w-full rounded mb-3">
+      <button onclick="saveToken()" class="bg-blue-600 text-white px-4 py-2 rounded w-full">Save & Continue</button>
+      <p id="tokenError" class="text-red-600 text-sm mt-2"></p>
+    </div>
+  `);
+}
+
+function saveToken() {
+  const val = document.getElementById('tokenInput').value.trim();
+  if (!val) { document.getElementById('tokenError').innerText = "Please paste a token"; return; }
+  TOKEN = val;
+  localStorage.setItem('vp_gh_token', TOKEN);
+  loadDashboard();
+}
+
+async function loadDashboard() {
+  render(`<div class="text-center mt-20">Loading products from GitHub...</div>`);
+  try {
+    const file = await ghGet('products.json');
+    productsSha = file.sha;
+    const jsonStr = b64DecodeUnicode(file.content);
+    const data = JSON.parse(jsonStr);
+    products = data.products;
+    renderDashboard();
+  } catch (e) {
+    render(`<div class="text-red-600 p-4">Error loading products: ${e.message}
+      <br><button onclick="loadDashboard()" class="underline mt-2">Retry</button>
+      <br><button onclick="resetToken()" class="underline mt-2">Reset Token</button></div>`);
+  }
+}
+
+function resetToken() {
+  localStorage.removeItem('vp_gh_token');
+  TOKEN = '';
+  showTokenScreen();
+}
+
+function renderDashboard() {
+  const rows = products.map((p, i) => `
+    <tr class="border-b">
+      <td class="p-2 font-mono">${p.code}</td>
+      <td class="p-2">${p.name}</td>
+      <td class="p-2">${p.imageName ? '✅' : '❌'}</td>
+      <td class="p-2"><button onclick="editProduct(${i})" class="text-blue-600 underline">Edit</button></td>
+    </tr>
+  `).join('');
+
+  render(`
+    <div class="bg-white p-6 rounded-xl shadow">
+      <div class="flex justify-between items-center mb-4">
+        <h1 class="text-xl font-bold">Value Picks India — Admin</h1>
+        <button onclick="showAddNew()" class="bg-green-600 text-white px-4 py-2 rounded">+ Add New Product</button>
       </div>
-      <h1 class="font-bold text-lg text-slate-900 mb-1">Value Picks Admin</h1>
-      <p class="text-xs text-slate-500 mb-4">Enter your master password to manage products.</p>
-      
-      <input 
-        type="password" 
-        id="adminPassInput" 
-        placeholder="Enter password..." 
-        class="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm text-center mb-3 focus:ring-2 focus:ring-brand-gold outline-none"
-        onkeydown="if(event.key==='Enter') verifyAuth()"
-      />
-      <button onclick="verifyAuth()" class="w-full bg-brand-navy text-white text-xs font-bold py-2.5 rounded-xl hover:bg-slate-800 transition">
-        Unlock Dashboard
-      </button>
-      <p id="authError" class="text-red-500 text-xs mt-2 hidden">Incorrect password</p>
-    </div>
-  </div>
-
-  <!-- DASHBOARD UI -->
-  <header class="bg-brand-navy text-white px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 sticky top-0 z-30 shadow">
-    <div class="flex items-center gap-3">
-      <span class="font-bold text-base">Value Picks <span class="text-brand-gold">Admin Center</span></span>
-      <span class="text-[10px] bg-white/20 px-2 py-0.5 rounded font-mono">IST Evaluated</span>
-    </div>
-    <div class="flex items-center gap-2">
-      <button onclick="openNewProductModal()" class="bg-brand-gold hover:bg-amber-600 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition">
-        + Add New Product (VP041+)
-      </button>
-      <button onclick="downloadJsonBackup()" class="bg-white/10 hover:bg-white/20 text-white text-xs px-3.5 py-2 rounded-xl border border-white/20 transition flex items-center gap-1">
-        💾 Export Updated JSON
-      </button>
-      <a href="/" target="_blank" class="text-xs text-slate-300 hover:text-white px-2 py-2">View Live Site ↗</a>
-    </div>
-  </header>
-
-  <main class="max-w-6xl mx-auto px-4 py-8">
-    
-    <!-- STATS -->
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-        <span class="text-xs text-slate-500 block">Total In Database</span>
-        <strong id="statTotal" class="text-xl font-bold text-slate-900">0</strong>
-      </div>
-      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-        <span class="text-xs text-slate-500 block">Currently Live in IST</span>
-        <strong id="statLive" class="text-xl font-bold text-emerald-600">0</strong>
-      </div>
-      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-        <span class="text-xs text-slate-500 block">Scheduled (Future)</span>
-        <strong id="statScheduled" class="text-xl font-bold text-amber-600">0</strong>
-      </div>
-    </div>
-
-    <!-- SEARCH & FILTER -->
-    <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 flex items-center justify-between gap-4">
-      <input 
-        type="text" 
-        id="adminSearch" 
-        placeholder="Filter by code (e.g. VP012) or product name..." 
-        class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-gold"
-        oninput="renderAdminTable()"
-      />
-    </div>
-
-    <!-- PRODUCT TABLE -->
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-      <table class="w-full text-left text-xs text-slate-600">
-        <thead class="bg-slate-50 border-b border-slate-200 text-slate-700 uppercase font-semibold">
-          <tr>
-            <th class="p-4">Code</th>
-            <th class="p-4">Status</th>
-            <th class="p-4">Product Name</th>
-            <th class="p-4">Publish Date</th>
-            <th class="p-4">Image</th>
-            <th class="p-4 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="adminTableBody" class="divide-y divide-slate-100">
-          <!-- Loaded via JS -->
-        </tbody>
+      <table class="w-full text-sm">
+        <thead><tr class="text-left border-b font-bold">
+          <td class="p-2">Code</td><td class="p-2">Name</td><td class="p-2">Image?</td><td class="p-2">Action</td>
+        </tr></thead>
+        <tbody>${rows}</tbody>
       </table>
     </div>
-  </main>
+  `);
+}
 
-  <!-- EDIT / CREATE MODAL -->
-  <div id="editModal" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
-      <button onclick="closeEditModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
-      <h2 id="modalTitle" class="font-bold text-lg text-brand-navy mb-4">Edit Product</h2>
+function editProduct(index) {
+  render(formHtml(products[index], index, false));
+}
 
-      <form id="productForm" onsubmit="saveProduct(event)" class="space-y-4 text-xs">
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="font-bold text-slate-700 block mb-1">Product Code</label>
-            <input type="text" id="formCode" required class="w-full border border-slate-300 rounded-lg px-3 py-2 font-mono font-bold bg-slate-50" />
-          </div>
-          <div>
-            <label class="font-bold text-slate-700 block mb-1">Publish Date (IST)</label>
-            <input type="date" id="formDate" required class="w-full border border-slate-300 rounded-lg px-3 py-2" />
-          </div>
-        </div>
+function showAddNew() {
+  const blank = {code:'', name:'', publishDate:'', amazonLink:'', imageName:'', description:'', whyWePicked:'', goodToKnow:'', howToUse:''};
+  render(formHtml(blank, -1, true));
+}
 
-        <div>
-          <label class="font-bold text-slate-700 block mb-1">Product Title / Name</label>
-          <input type="text" id="formName" required class="w-full border border-slate-300 rounded-lg px-3 py-2" />
-        </div>
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
-        <div>
-          <label class="font-bold text-slate-700 block mb-1">Amazon Affiliate Link</label>
-          <input type="url" id="formLink" required class="w-full border border-slate-300 rounded-lg px-3 py-2" />
-        </div>
-
-        <!-- IMAGE ATTACHMENT WITH AUTOMATIC VP CODE TAGGING -->
-        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
-          <label class="font-bold text-slate-700 block mb-1">Product Image File</label>
-          <p class="text-[11px] text-slate-500 mb-2">When you choose a photo, the system automatically names it to match this product code (e.g. <span id="autoImageNameTag" class="font-mono font-bold text-brand-navy">VP001.jpg</span>).</p>
-          <input type="file" id="formImageFile" accept="image/*" onchange="handleImageSelection(this)" class="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-brand-navy file:text-white hover:file:bg-slate-800" />
-          <input type="hidden" id="formImageName" />
-          <div id="imagePreview" class="mt-2 text-[11px] text-emerald-600 font-semibold"></div>
-        </div>
-
-        <div>
-          <label class="font-bold text-slate-700 block mb-1">Description</label>
-          <textarea id="formDescription" rows="3" class="w-full border border-slate-300 rounded-lg px-3 py-2"></textarea>
-        </div>
-
-        <div>
-          <label class="font-bold text-slate-700 block mb-1">Why We Picked It</label>
-          <textarea id="formWhy" rows="3" class="w-full border border-slate-300 rounded-lg px-3 py-2"></textarea>
-        </div>
-
-        <div>
-          <label class="font-bold text-slate-700 block mb-1">Good To Know (Caveats & Sensitivities)</label>
-          <textarea id="formGood" rows="3" class="w-full border border-slate-300 rounded-lg px-3 py-2"></textarea>
-        </div>
-
-        <div>
-          <label class="font-bold text-slate-700 block mb-1">How To Use</label>
-          <textarea id="formHow" rows="2" class="w-full border border-slate-300 rounded-lg px-3 py-2"></textarea>
-        </div>
-
-        <div class="pt-4 border-t border-slate-200 flex justify-end gap-2">
-          <button type="button" onclick="closeEditModal()" class="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg">Cancel</button>
-          <button type="submit" class="px-6 py-2 bg-brand-navy text-white font-bold rounded-lg hover:bg-slate-800 transition">Save Changes</button>
-        </div>
-      </form>
+function formHtml(p, index, isNew) {
+  return `
+    <div class="bg-white p-6 rounded-xl shadow max-w-2xl mx-auto">
+      <button onclick="loadDashboard()" class="text-blue-600 underline mb-4">&larr; Back to list</button>
+      <h1 class="text-lg font-bold mb-4">${isNew ? 'Add New Product' : 'Edit ' + p.code}</h1>
+      <div class="space-y-3">
+        <div><label class="text-sm font-bold">Code</label>
+          <input id="f_code" value="${p.code}" ${isNew ? '' : 'readonly'} class="border p-2 w-full rounded ${isNew ? '' : 'bg-gray-100'}"></div>
+        <div><label class="text-sm font-bold">Name</label>
+          <input id="f_name" value="${escapeHtml(p.name)}" class="border p-2 w-full rounded"></div>
+        <div><label class="text-sm font-bold">Publish Date (YYYY-MM-DD)</label>
+          <input id="f_publishDate" value="${p.publishDate}" class="border p-2 w-full rounded"></div>
+        <div><label class="text-sm font-bold">Amazon Link</label>
+          <input id="f_amazonLink" value="${escapeHtml(p.amazonLink)}" class="border p-2 w-full rounded"></div>
+        <div><label class="text-sm font-bold">Description</label>
+          <textarea id="f_description" class="border p-2 w-full rounded" rows="3">${escapeHtml(p.description)}</textarea></div>
+        <div><label class="text-sm font-bold">Why We Picked</label>
+          <textarea id="f_whyWePicked" class="border p-2 w-full rounded" rows="3">${escapeHtml(p.whyWePicked)}</textarea></div>
+        <div><label class="text-sm font-bold">Good To Know</label>
+          <textarea id="f_goodToKnow" class="border p-2 w-full rounded" rows="3">${escapeHtml(p.goodToKnow)}</textarea></div>
+        <div><label class="text-sm font-bold">How To Use</label>
+          <textarea id="f_howToUse" class="border p-2 w-full rounded" rows="2">${escapeHtml(p.howToUse)}</textarea></div>
+        <div><label class="text-sm font-bold">Current Image</label>
+          <div class="text-sm text-gray-600 mb-1">${p.imageName || 'None yet'}</div>
+          <input id="f_imageFile" type="file" accept="image/*" class="border p-2 w-full rounded"></div>
+        <div id="formMsg" class="text-sm"></div>
+        <button onclick="saveProduct(${index}, ${isNew})" class="bg-blue-600 text-white px-4 py-2 rounded w-full">
+          Save to Live Site
+        </button>
+      </div>
     </div>
-  </div>
+  `;
+}
 
-  <script>
-    // Default master password (Change this to any password you want!)
-    const MASTER_PASS = "valuepicks2026";
-    let products = [];
+async function saveProduct(index, isNew) {
+  const msgEl = document.getElementById('formMsg');
+  msgEl.innerText = 'Saving... please wait';
+  msgEl.className = 'text-blue-600 text-sm';
 
-    function verifyAuth() {
-      const val = document.getElementById('adminPassInput').value;
-      if (val === MASTER_PASS) {
-        document.getElementById('authOverlay').classList.add('hidden');
-        sessionStorage.setItem('vp_auth', 'true');
-        loadData();
-      } else {
-        document.getElementById('authError').classList.remove('hidden');
-      }
+  try {
+    const code = document.getElementById('f_code').value.trim();
+    if (!code) throw new Error('Product code is required');
+
+    const newProduct = {
+      code: code,
+      name: document.getElementById('f_name').value,
+      publishDate: document.getElementById('f_publishDate').value,
+      amazonLink: document.getElementById('f_amazonLink').value,
+      imageName: isNew ? '' : products[index].imageName,
+      description: document.getElementById('f_description').value,
+      whyWePicked: document.getElementById('f_whyWePicked').value,
+      goodToKnow: document.getElementById('f_goodToKnow').value,
+      howToUse: document.getElementById('f_howToUse').value
+    };
+
+    const fileInput = document.getElementById('f_imageFile');
+    if (fileInput.files && fileInput.files[0]) {
+      msgEl.innerText = 'Uploading image...';
+      const file = fileInput.files[0];
+      const ext = file.name.split('.').pop();
+      const imageName = `${code}.${ext}`;
+      const base64Data = await fileToBase64(file);
+
+      const existing = await ghGet(`images/${imageName}`);
+      await ghPut(`images/${imageName}`, base64Data, `Update image for ${code}`, existing ? existing.sha : null);
+
+      newProduct.imageName = imageName;
     }
 
-    // Auto-login if session active
-    if (sessionStorage.getItem('vp_auth') === 'true') {
-      document.getElementById('authOverlay').classList.add('hidden');
-      loadData();
+    if (isNew) {
+      if (products.find(p => p.code === code)) throw new Error('This product code already exists');
+      products.push(newProduct);
+    } else {
+      products[index] = newProduct;
     }
 
-    async function loadData() {
-      try {
-        const res = await fetch('/products.json');
-        const data = await res.json();
-        products = data.products || [];
-        renderAdminTable();
-      } catch (e) {
-        alert("Failed to load catalog.");
-      }
-    }
+    msgEl.innerText = 'Saving product data...';
+    const updatedJson = JSON.stringify({ products }, null, 2);
+    const encoded = b64EncodeUnicode(updatedJson);
+    const result = await ghPut('products.json', encoded, `Update product ${code}`, productsSha);
+    productsSha = result.content.sha;
 
-    function getCurrentISTDate() {
-      const now = new Date();
-      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
-    }
+    msgEl.innerText = '✅ Saved! Your live site will update within about 1 minute.';
+    msgEl.className = 'text-green-600 text-sm font-bold';
 
-    function renderAdminTable() {
-      const tbody = document.getElementById('adminTableBody');
-      const q = document.getElementById('adminSearch').value.toLowerCase();
-      const today = getCurrentISTDate();
+    setTimeout(loadDashboard, 2000);
 
-      let liveCount = 0;
-      let schedCount = 0;
+  } catch (e) {
+    msgEl.innerText = '❌ Error: ' + e.message;
+    msgEl.className = 'text-red-600 text-sm';
+  }
+}
 
-      const filtered = products.filter(p => {
-        const isLive = p.publishDate <= today;
-        if (isLive) liveCount++; else schedCount++;
-        return p.code.toLowerCase().includes(q) || p.name.toLowerCase().includes(q);
-      });
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
-      document.getElementById('statTotal').textContent = products.length;
-      document.getElementById('statLive').textContent = liveCount;
-      document.getElementById('statScheduled').textContent = schedCount;
-
-      tbody.innerHTML = filtered.map(p => {
-        const isLive = p.publishDate <= today;
-        return `
-          <tr class="hover:bg-slate-50 transition">
-            <td class="p-4 font-mono font-bold text-brand-navy">${p.code}</td>
-            <td class="p-4">
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${isLive ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">
-                ${isLive ? '🟢 Live' : '⏳ Scheduled'}
-              </span>
-            </td>
-            <td class="p-4 font-medium text-slate-900 max-w-xs truncate">${p.name}</td>
-            <td class="p-4 font-mono text-slate-500">${p.publishDate}</td>
-            <td class="p-4">
-              ${p.imageName ? `<span class="text-emerald-600 font-bold">✓ Attached</span>` : `<span class="text-slate-400 italic">Placeholder</span>`}
-            </td>
-            <td class="p-4 text-right">
-              <button onclick="editProduct('${p.code}')" class="px-3 py-1 bg-slate-100 hover:bg-brand-navy hover:text-white text-slate-700 font-bold rounded-lg transition">
-                Edit
-              </button>
-            </td>
-          </tr>
-        `;
-      }).join('');
-    }
-
-    function editProduct(code) {
-      const p = products.find(item => item.code === code);
-      if (!p) return;
-
-      document.getElementById('modalTitle').textContent = `Edit Product ${p.code}`;
-      document.getElementById('formCode').value = p.code;
-      document.getElementById('formCode').readOnly = true;
-      document.getElementById('formDate').value = p.publishDate;
-      document.getElementById('formName').value = p.name;
-      document.getElementById('formLink').value = p.amazonLink;
-      document.getElementById('formImageName').value = p.imageName || '';
-      document.getElementById('formDescription').value = p.description || '';
-      document.getElementById('formWhy').value = p.whyWePicked || '';
-      document.getElementById('formGood').value = p.goodToKnow || '';
-      document.getElementById('formHow').value = p.howToUse || '';
-
-      document.getElementById('autoImageNameTag').textContent = `${p.code}.jpg`;
-      document.getElementById('imagePreview').textContent = p.imageName ? `Current file: ${p.imageName}` : 'No image file uploaded yet (using placeholder).';
-
-      document.getElementById('editModal').classList.remove('hidden');
-    }
-
-    function openNewProductModal() {
-      // Find highest product number
-      let nextNum = 41;
-      products.forEach(p => {
-        const match = p.code.match(/VP(\d+)/i);
-        if (match) {
-          const num = parseInt(match[1]);
-          if (num >= nextNum) nextNum = num + 1;
-        }
-      });
-
-      const nextCode = `VP${String(nextNum).padStart(3, '0')}`;
-
-      document.getElementById('modalTitle').textContent = `Add New Product (${nextCode})`;
-      document.getElementById('formCode').value = nextCode;
-      document.getElementById('formCode').readOnly = false;
-      document.getElementById('formDate').value = getCurrentISTDate();
-      document.getElementById('formName').value = '';
-      document.getElementById('formLink').value = '';
-      document.getElementById('formImageName').value = '';
-      document.getElementById('formDescription').value = '';
-      document.getElementById('formWhy').value = '';
-      document.getElementById('formGood').value = '';
-      document.getElementById('formHow').value = '';
-
-      document.getElementById('autoImageNameTag').textContent = `${nextCode}.jpg`;
-      document.getElementById('imagePreview').textContent = 'No image selected.';
-
-      document.getElementById('editModal').classList.remove('hidden');
-    }
-
-    function handleImageSelection(input) {
-      if (input.files && input.files[0]) {
-        const code = document.getElementById('formCode').value.trim() || 'PROD';
-        const file = input.files[0];
-        const ext = file.name.split('.').pop() || 'jpg';
-        // Auto-tag image name to product code!
-        const cleanName = `${code}.${ext}`;
-        document.getElementById('formImageName').value = cleanName;
-        document.getElementById('imagePreview').textContent = `✓ Image will be named: ${cleanName}`;
-      }
-    }
-
-    function closeEditModal() {
-      document.getElementById('editModal').classList.add('hidden');
-    }
-
-    function saveProduct(e) {
-      e.preventDefault();
-      const code = document.getElementById('formCode').value.trim();
-      const existingIndex = products.findIndex(p => p.code === code);
-
-      const record = {
-        code: code,
-        name: document.getElementById('formName').value.trim(),
-        publishDate: document.getElementById('formDate').value,
-        amazonLink: document.getElementById('formLink').value.trim(),
-        imageName: document.getElementById('formImageName').value.trim(),
-        description: document.getElementById('formDescription').value.trim(),
-        whyWePicked: document.getElementById('formWhy').value.trim(),
-        goodToKnow: document.getElementById('formGood').value.trim(),
-        howToUse: document.getElementById('formHow').value.trim()
-      };
-
-      if (existingIndex >= 0) {
-        products[existingIndex] = record;
-      } else {
-        products.push(record);
-      }
-
-      closeEditModal();
-      renderAdminTable();
-      alert(`Product ${code} saved locally! Click "Export Updated JSON" in the top bar to save your file.`);
-    }
-
-    function downloadJsonBackup() {
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ products: products }, null, 2));
-      const dlAnchorElem = document.createElement('a');
-      dlAnchorElem.setAttribute("href", dataStr);
-      dlAnchorElem.setAttribute("download", "products.json");
-      dlAnchorElem.click();
-    }
-  </script>
+showPasswordScreen();
+</script>
 </body>
 </html>
